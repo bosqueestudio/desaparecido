@@ -18,7 +18,7 @@
             align-items: center; justify-content: center; z-index: 100;
             transition: opacity 1.8s cubic-bezier(0.16, 1, 0.3, 1);
         }
-        .loader-text { letter-spacing: 6px; font-size: 10px; text-transform: uppercase; margin-bottom: 25px; color: #666; font-weight: 400; }
+        .loader-text { letter-spacing: 6px; font-size: 10px; text-transform: uppercase; margin-bottom: 25px; color: #888; font-weight: 400; }
         #progress-bar { width: 160px; height: 1px; background: #111; position: relative; overflow: hidden; }
         #progress-fill { width: 0%; height: 100%; background: #ddd; transition: width 0.2s ease; }
 
@@ -35,16 +35,24 @@
         #nav-hint {
             position: absolute; bottom: 45px; right: 45px; z-index: 10;
             display: flex; gap: 25px; pointer-events: none; opacity: 0;
-            transition: opacity 2.5s ease 4s; /* Se revela casi al terminar de armarse */
+            transition: opacity 2.5s ease 4s;
         }
         .hint-item { display: flex; align-items: center; gap: 8px; color: #444; font-size: 9px; letter-spacing: 2px; text-transform: uppercase; }
         .hint-dot { width: 3px; height: 3px; border-radius: 50%; background: #333; }
+        
+        #error-report {
+            display: none; position: absolute; top: 20px; left: 20px; z-index: 1000;
+            color: #ff4444; font-family: monospace; font-size: 10px; background: rgba(0,0,0,0.8);
+            padding: 10px; border: 1px solid #ff4444; pointer-events: none;
+        }
     </style>
 </head>
 <body>
 
+    <div id="error-report"></div>
+
     <div id="loading-screen">
-        <div class="loader-text">Invocando memoria...</div>
+        <div class="loader-text" id="status-label">Invocando memoria...</div>
         <div id="progress-bar"><div id="progress-fill"></div></div>
     </div>
 
@@ -64,7 +72,7 @@
 
     <script>
         // ===================================================
-        // DESAPARECIDO // ENGINE v3.1 (POETIC ASSEMBLY CORE)
+        // DESAPARECIDO // ENGINE v3.2 (FAIL-SAFE POETIC CORE)
         // ===================================================
         
         let scene, camera, renderer, controls, particleSystem, shaderMaterial, raycaster, mouseMesh;
@@ -72,10 +80,9 @@
         const mouse = new THREE.Vector2(-1000, -1000);
         
         let assemblyStartTime = null;
-        const ASSEMBLY_DURATION = 10000.0; // 10 Segundos de precipitación poética
+        const ASSEMBLY_DURATION = 10000.0; 
         let isEngineReady = false;
 
-        // Rutas estrictas para servidor remoto (GitHub Pages)
         const ASSETS = {
             model: './assets/jersey.obj', 
             texture: './assets/textura.jpg'
@@ -107,7 +114,7 @@
             window.addEventListener('mousemove', onMouseMove, false);
             window.addEventListener('resize', onResize, false);
 
-            loadAssets();
+            loadAssetsSafe();
             requestAnimationFrame(animate); 
         }
 
@@ -116,46 +123,74 @@
             mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
         }
 
-        function loadAssets() {
+        function loadAssetsSafe() {
             const manager = new THREE.LoadingManager();
             const textureLoader = new THREE.TextureLoader(manager);
             const objLoader = new THREE.OBJLoader(manager);
 
-            let tex, obj;
+            let tex = null;
+            let obj = null;
+            let forceStartTimer = null;
+
+            // SISTEMA FORENSE DE RESCATE (Si GitHub no responde en 8 seg, forzar render)
+            forceStartTimer = setTimeout(() => {
+                if(!isEngineReady) {
+                    console.warn(">> ALERTA DE ARQUITECTURA: El servidor no entregó los activos remotos a tiempo. Forzando condensación procedural.");
+                    const errBox = document.getElementById('error-report');
+                    errBox.style.display = 'block';
+                    errBox.innerText = ">> ADVERTENCIA: Archivo ./assets/jersey.obj no encontrado en servidor. Usando geometría matemática base.";
+                    
+                    // Crear textura gris de rescate
+                    const canvas = document.createElement('canvas'); canvas.width=1; canvas.height=1;
+                    const ctx = canvas.getContext('2d'); ctx.fillStyle="#fff"; ctx.fillRect(0,0,1,1);
+                    tex = new THREE.CanvasTexture(canvas);
+
+                    // Crear geometría de rescate
+                    const emergencyGeo = new THREE.TorusKnotGeometry(18, 7, 250, 35);
+                    dismissLoader();
+                    setupSceneGeometriesMesh(emergencyGeo, tex);
+                }
+            }, 8000);
 
             manager.onProgress = (u, loaded, total) => {
                 progressFill.style.width = (loaded / total * 100) + '%';
             };
 
             manager.onLoad = () => {
-                const loaderScreen = document.getElementById('loading-screen');
+                clearTimeout(forceStartTimer);
+                dismissLoader();
+                
+                let extractedGeo = null;
+                if(obj) {
+                    obj.traverse(child => { if(child.isMesh) extractedGeo = child.geometry.clone(); });
+                }
+                
+                if(!extractedGeo) extractedGeo = new THREE.TorusKnotGeometry(18, 7, 250, 35);
+                setupSceneGeometriesMesh(extractedGeo, tex);
+            };
+
+            manager.onError = (url) => {
+                console.error(">> Error 404 crítico buscando asset:", url);
+            };
+
+            textureLoader.load(ASSETS.texture, (t) => tex = t, undefined, () => {});
+            objLoader.load(ASSETS.model, (o) => obj = o, undefined, () => {});
+        }
+
+        function dismissLoader() {
+            const loaderScreen = document.getElementById('loading-screen');
+            if(loaderScreen) {
                 loaderScreen.style.opacity = '0';
                 setTimeout(() => {
                     loaderScreen.remove();
                     document.getElementById('ui-overlay').style.opacity = '1';
                     document.getElementById('nav-hint').style.opacity = '1';
                 }, 1800);
-
-                setupSceneGeometries(obj, tex);
-                isEngineReady = true; 
-            };
-
-            textureLoader.load(ASSETS.texture, (t) => tex = t);
-            objLoader.load(ASSETS.model, (o) => obj = o);
+            }
         }
 
-        function setupSceneGeometries(obj, tex) {
-            let rawGeometry;
-            obj.traverse(child => {
-                if (child.isMesh) {
-                    rawGeometry = child.geometry.clone();
-                }
-            });
-
-            // 1. CENTRADO MILIMÉTRICO ABSOLUTO
+        function setupSceneGeometriesMesh(rawGeometry, tex) {
             rawGeometry.center(); 
-
-            // 2. Normalización matemática a escala áurea del viewport
             rawGeometry.computeBoundingBox();
             const size = rawGeometry.boundingBox.getSize(new THREE.Vector3());
             const scale = 72.0 / Math.max(size.x, size.y, size.z);
@@ -167,6 +202,7 @@
 
             buildPoeticShader(tex);
             generateCloud(rawGeometry);
+            isEngineReady = true; 
         }
 
         function buildPoeticShader(tex) {
@@ -193,12 +229,8 @@
                         vNormal = normalMatrix * normalMap;
                         vUv = uv;
 
-                        // Algoritmo de Condensación Poética:
-                        // La partícula viaja del vacío al jersey tomando el 15% de la ventana temporal
                         float travelWindow = 0.15;
                         float progress = clamp((uGlobalTime - aBirthTime) / travelWindow, 0.0, 1.0);
-                        
-                        // Desaceleración orgánica (Cubic Ease Out)
                         float ease = 1.0 - pow(1.0 - progress, 3.0);
 
                         vec3 currentPos = mix(aVoidPos, position, ease);
@@ -222,7 +254,6 @@
                     uniform vec3 uMousePos;
 
                     void main() {
-                        // Ocultar hasta que el cronómetro alcance su hora de nacimiento
                         if(vMaterialization <= 0.001) discard;
 
                         float light = max(dot(normalize(vNormal), normalize(uLight)), 0.0);
@@ -254,7 +285,7 @@
 
             const sPos = geo.attributes.position;
             const sNorm = geo.attributes.normal;
-            const sUv = geo.attributes.uv;
+            const sUv = geo.attributes.uv || new THREE.BufferAttribute(new Float32Array(sPos.count*2), 2);
 
             for(let i=0; i<count; i++) {
                 const idx = Math.floor(Math.random() * sPos.count);
@@ -263,7 +294,6 @@
                 pos[i*3+1] = sPos.getY(idx);
                 pos[i*3+2] = sPos.getZ(idx);
 
-                // Nube de origen dispersa en el vacío profundo
                 const theta = Math.random() * Math.PI * 2;
                 const phi = Math.acos((Math.random() * 2) - 1);
                 const r = 190 + Math.random() * 90;
@@ -279,7 +309,6 @@
                 uvs[i*2] = sUv.getX(idx);
                 uvs[i*2+1] = sUv.getY(idx);
 
-                // Distribución de nacimientos sesgada para empezar lento y terminar en avalancha
                 birth[i] = Math.pow(Math.random(), 1.1) * 0.85; 
             }
 
